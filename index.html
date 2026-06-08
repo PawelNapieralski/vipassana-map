@@ -1,0 +1,392 @@
+
+<h2 class="sr-only">Vipassana — living map of loving-kindness.</h2>
+<style>
+#app{font-family:var(--font-sans)}
+#map-wrap{display:flex;border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);overflow:hidden;background:var(--color-background-primary);min-height:360px}
+#map-area{flex:1;min-width:0;position:relative}
+#map-svg{display:block;width:100%}
+#side{width:210px;flex-shrink:0;border-left:0.5px solid var(--color-border-tertiary);display:flex;flex-direction:column}
+#side-top{padding:10px 12px 8px;border-bottom:0.5px solid var(--color-border-tertiary)}
+#side-top p{margin:0 0 2px;font-size:13px;font-weight:500;color:var(--color-text-primary)}
+#side-count{font-size:11px;color:var(--color-text-tertiary)}
+#filter-row{padding:7px 10px;border-bottom:0.5px solid var(--color-border-tertiary)}
+#filter-row select{width:100%;font-size:12px}
+#contact-list{flex:1;overflow-y:auto}
+.cc{padding:9px 12px;border-bottom:0.5px solid var(--color-border-tertiary);cursor:pointer}
+.cc:hover{background:var(--color-background-secondary)}
+.cc.active{background:#E1F5EE}
+.cc .cn{font-size:13px;font-weight:500;color:var(--color-text-primary);margin:0 0 1px}
+.cc .cl{font-size:11px;color:var(--color-text-secondary);margin:0 0 2px}
+.cc .cb{font-size:11px;color:var(--color-text-tertiary);margin:0;line-height:1.4}
+#zoom-bar{padding:8px 12px;border-top:0.5px solid var(--color-border-tertiary);display:none}
+#detail-wrap{margin-top:10px}
+#detail-card{background:var(--color-background-primary);border:0.5px solid var(--color-border-tertiary);border-radius:var(--border-radius-lg);padding:11px 13px;display:flex;align-items:flex-start;gap:10px}
+#bottom-bar{margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.hint{position:absolute;bottom:8px;left:8px;background:rgba(29,158,117,0.12);border:0.5px solid #5DCAA5;border-radius:var(--border-radius-md);padding:4px 10px;font-size:11px;color:#085041;pointer-events:none}
+</style>
+
+<div id="app">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+    <p style="font-size:15px;font-weight:500;margin:0;color:var(--color-text-primary);">Loving-kindness & goodwill vibration map</p>
+    <span id="view-label" style="font-size:11px;background:#E1F5EE;color:#0F6E56;padding:3px 10px;border-radius:var(--border-radius-md);">world view</span>
+  </div>
+  <div id="map-wrap">
+    <div id="map-area">
+      <svg id="map-svg" viewBox="0 0 900 460"></svg>
+      <div id="hint-el" class="hint">Click a country with multiple pins to zoom in</div>
+    </div>
+    <div id="side">
+      <div id="side-top">
+        <p>People I sat with</p>
+        <span id="side-count">loading...</span>
+      </div>
+      <div id="filter-row">
+        <select id="country-filter"><option value="">All countries</option></select>
+      </div>
+      <div id="contact-list"><div style="padding:16px 12px;font-size:12px;color:var(--color-text-tertiary);">Loading...</div></div>
+      <div id="zoom-bar"><button id="back-btn" style="font-size:12px;width:100%;"><i class="ti ti-arrow-left" aria-hidden="true"></i> Back to world</button></div>
+    </div>
+  </div>
+  <div id="detail-wrap"></div>
+  <div id="bottom-bar">
+    <input type="tel" id="phone-input" placeholder="Your number (+48...)" style="font-size:12px;width:160px;"/>
+    <button id="login-btn" style="font-size:12px;">Log in</button>
+    <span id="login-status" style="font-size:11px;color:var(--color-text-tertiary);"></span>
+    <button style="font-size:12px;margin-left:auto;" onclick="loadData()"><i class="ti ti-refresh" aria-hidden="true"></i> Refresh</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
+<script>
+const SHEET_URL='https://script.google.com/macros/s/AKfycbzE2Eo8bv27MwHEWKJ87JZAVCgYjVcVXXYFY_ClyPW1oVw0ppP7wCwvMBROcqVN8-mL/exec';
+
+function getCol(row,key){
+  const k=Object.keys(row).find(k=>k.trim()===key.trim());
+  return k?String(row[k]||'').trim():'';
+}
+
+function applyJitter(list,proj){
+  const R=16;
+  const groups={};
+  list.forEach(p=>{
+    if(!p.coords)return;
+    const[cx,cy]=proj([p.coords[1],p.coords[0]]);
+    const key=`${Math.round(cx)},${Math.round(cy)}`;
+    if(!groups[key])groups[key]=[];
+    groups[key].push(p);
+  });
+  const out={};
+  Object.values(groups).forEach(grp=>{
+    const n=grp.length;
+    grp.forEach((p,i)=>{
+      const[cx,cy]=proj([p.coords[1],p.coords[0]]);
+      if(n===1){out[p.id]=[cx,cy];}
+      else{
+        const angle=(2*Math.PI/n)*i-Math.PI/2;
+        const r=n===2?R*0.6:R;
+        out[p.id]=[cx+r*Math.cos(angle),cy+r*Math.sin(angle)];
+      }
+    });
+  });
+  return out;
+}
+
+const GC={
+  'Poland':'52.0,19.0','Warsaw':'52.23,21.01','Warszawa':'52.23,21.01',
+  'Kraków':'50.06,19.94','Krakow':'50.06,19.94','Gdańsk':'54.35,18.65','Gdansk':'54.35,18.65',
+  'Wrocław':'51.11,17.04','Wroclaw':'51.11,17.04','Poznań':'52.41,16.93','Poznan':'52.41,16.93',
+  'Łódź':'51.76,19.46','Lodz':'51.76,19.46','Lublin':'51.25,22.57','Katowice':'50.26,19.02',
+  'Szczecin':'53.43,14.55','Białystok':'53.13,23.16','Bialystok':'53.13,23.16',
+  'Gdynia':'54.52,18.53','Toruń':'53.01,18.60','Torun':'53.01,18.60',
+  'Rzeszów':'50.04,21.99','Rzeszow':'50.04,21.99','Bydgoszcz':'53.12,18.01',
+  'Olsztyn':'53.78,20.49','Kielce':'50.87,20.63','Radom':'51.40,21.15',
+  'Australia':'-25.0,133.0','Sydney':'-33.87,151.21','Melbourne':'-37.81,144.96',
+  'Brisbane':'-27.47,153.02','Perth':'-31.95,115.86','Adelaide':'-34.93,138.60',
+  'India':'20.0,77.0','Mumbai':'19.07,72.88','Delhi':'28.61,77.21',
+  'Bangalore':'12.97,77.59','Chennai':'13.08,80.27','Pune':'18.52,73.86',
+  'France':'46.0,2.0','Paris':'48.85,2.35','Lyon':'45.75,4.83','Marseille':'43.30,5.37',
+  'Germany':'51.0,10.0','Berlin':'52.52,13.40','Munich':'48.14,11.58',
+  'Hamburg':'53.55,10.00','Frankfurt':'50.11,8.68','Cologne':'50.94,6.96',
+  'Japan':'36.0,138.0','Tokyo':'35.68,139.69','Osaka':'34.69,135.50','Kyoto':'35.01,135.77',
+  'Colombia':'4.0,-72.0','Bogotá':'4.71,-74.07','Bogota':'4.71,-74.07',
+  'Czechia':'50.0,15.5','Czech Republic':'50.0,15.5','Prague':'50.08,14.44',
+  'Praha':'50.08,14.44','Brno':'49.20,16.61',
+  'UK':'54.0,-2.0','United Kingdom':'54.0,-2.0','London':'51.51,-0.13',
+  'Manchester':'53.48,-2.24','Edinburgh':'55.95,-3.19',
+  'Spain':'40.0,-4.0','Barcelona':'41.39,2.15','Madrid':'40.42,-3.70',
+  'USA':'38.0,-97.0','United States':'38.0,-97.0','United States of America':'38.0,-97.0',
+  'New York':'40.71,-74.01','San Francisco':'37.77,-122.42',
+  'Los Angeles':'34.05,-118.24','Chicago':'41.88,-87.63',
+  'Brazil':'-10.0,-55.0','São Paulo':'-23.55,-46.63','Sao Paulo':'-23.55,-46.63',
+  'Canada':'56.0,-96.0','Toronto':'43.65,-79.38','Vancouver':'49.28,-123.12','Montreal':'45.50,-73.57',
+  'Netherlands':'52.3,5.3','Amsterdam':'52.37,4.90','Rotterdam':'51.92,4.48',
+  'Sweden':'60.0,18.0','Stockholm':'59.33,18.07',
+  'Italy':'42.0,13.0','Rome':'41.90,12.50','Milan':'45.46,9.19','Florence':'43.77,11.25',
+  'Switzerland':'46.8,8.2','Zurich':'47.38,8.54','Geneva':'46.20,6.14',
+  'Austria':'47.5,14.5','Vienna':'48.21,16.37',
+  'Portugal':'39.5,-8.0','Lisbon':'38.72,-9.14','Porto':'41.16,-8.63',
+  'Thailand':'15.0,101.0','Bangkok':'13.75,100.52','Chiang Mai':'18.79,98.98',
+  'Vietnam':'16.0,108.0','Ho Chi Minh':'10.82,106.63','Hanoi':'21.03,105.83',
+  'Israel':'31.5,34.8','Tel Aviv':'32.08,34.78','Jerusalem':'31.77,35.21',
+  'South Africa':'-29.0,25.0','Cape Town':'-33.93,18.42','Johannesburg':'-26.20,28.04',
+  'Argentina':'-34.0,-64.0','Buenos Aires':'-34.60,-58.38',
+  'Mexico':'23.0,-102.0','Mexico City':'19.43,-99.13',
+  'Ukraine':'49.0,32.0','Kyiv':'50.45,30.52','Lviv':'49.84,24.03',
+  'Hungary':'47.0,19.0','Budapest':'47.50,19.05',
+  'Croatia':'45.1,15.2','Zagreb':'45.81,15.98','Split':'43.51,16.44','Dubrovnik':'42.65,18.09',
+  'Serbia':'44.0,21.0','Belgrade':'44.82,20.46',
+  'Romania':'45.9,24.9','Bucharest':'44.44,26.10','Cluj':'46.77,23.59',
+  'Slovakia':'48.7,19.5','Bratislava':'48.15,17.11',
+  'Denmark':'56.0,10.0','Copenhagen':'55.68,12.57',
+  'Norway':'60.5,8.0','Oslo':'59.91,10.75',
+  'Finland':'64.0,26.0','Helsinki':'60.17,24.94',
+  'Belgium':'50.8,4.5','Brussels':'50.85,4.35',
+  'Greece':'39.0,22.0','Athens':'37.98,23.73',
+  'New Zealand':'-41.0,174.0','Auckland':'-36.87,174.77','Wellington':'-41.29,174.78',
+  'Singapore':'1.35,103.82','Malaysia':'4.0,109.0','Kuala Lumpur':'3.14,101.69',
+  'China':'35.0,103.0','Beijing':'39.91,116.39','Shanghai':'31.23,121.47',
+  'South Korea':'36.0,128.0','Seoul':'37.57,126.98',
+  'Taiwan':'23.7,121.0','Taipei':'25.04,121.51',
+  'Ireland':'53.4,-8.0','Dublin':'53.33,-6.25',
+  'Turkey':'39.0,35.0','Istanbul':'41.01,28.95',
+  'Nepal':'28.0,84.0','Kathmandu':'27.71,85.32',
+  'Indonesia':'-5.0,120.0','Bali':'-8.34,115.09','Jakarta':'-6.21,106.85',
+  'Russia':'60.0,100.0','Moscow':'55.75,37.62','Saint Petersburg':'59.95,30.32',
+  'Lithuania':'56.0,24.0','Vilnius':'54.69,25.28',
+  'Latvia':'57.0,25.0','Riga':'56.95,24.11',
+  'Estonia':'59.0,25.0','Tallinn':'59.44,24.75',
+  'Slovenia':'46.1,14.8','Ljubljana':'46.05,14.51',
+  'Bulgaria':'42.7,25.5','Sofia':'42.70,23.32',
+  'Georgia':'42.0,43.5','Tbilisi':'41.69,44.83',
+};
+
+function geocode(city,country){
+  if(city){
+    for(const c of city.split(/[\/,]/)){
+      const t=c.trim();
+      const k=Object.keys(GC).find(k=>k.toLowerCase()===t.toLowerCase());
+      if(k){const[la,lo]=GC[k].split(',');return[+la,+lo];}
+    }
+  }
+  if(country){
+    const t=country.trim();
+    const k=Object.keys(GC).find(k=>k.toLowerCase()===t.toLowerCase());
+    if(k){const[la,lo]=GC[k].split(',');return[+la,+lo];}
+  }
+  return null;
+}
+
+const CNM={
+  'Poland':'Poland','Australia':'Australia','India':'India','France':'France','Germany':'Germany',
+  'Japan':'Japan','Colombia':'Colombia','Czechia':'Czechia','Czech Republic':'Czechia',
+  'UK':'United Kingdom','United Kingdom':'United Kingdom','Spain':'Spain',
+  'USA':'United States of America','United States':'United States of America',
+  'United States of America':'United States of America',
+  'Brazil':'Brazil','Canada':'Canada','Netherlands':'Netherlands','Sweden':'Sweden',
+  'Italy':'Italy','Switzerland':'Switzerland','Austria':'Austria','Portugal':'Portugal',
+  'Thailand':'Thailand','Vietnam':'Vietnam','Israel':'Israel','South Africa':'South Africa',
+  'Argentina':'Argentina','Mexico':'Mexico','Ukraine':'Ukraine','Hungary':'Hungary',
+  'Croatia':'Croatia','Serbia':'Serbia','Romania':'Romania','Slovakia':'Slovakia',
+  'Denmark':'Denmark','Norway':'Norway','Finland':'Finland','Belgium':'Belgium',
+  'Greece':'Greece','New Zealand':'New Zealand','Singapore':'Singapore',
+  'Malaysia':'Malaysia','China':'China','South Korea':'South Korea','Taiwan':'Taiwan',
+  'Ireland':'Ireland','Turkey':'Turkey','Nepal':'Nepal','Indonesia':'Indonesia',
+  'Russia':'Russia','Lithuania':'Lithuania','Latvia':'Latvia','Estonia':'Estonia',
+  'Slovenia':'Slovenia','Bulgaria':'Bulgaria','Georgia':'Georgia',
+};
+
+const isDark=matchMedia('(prefers-color-scheme: dark)').matches;
+const LAND=isDark?'#2a4055':'#c8dfc8',BORDER=isDark?'#3a5060':'#9ab89a',WATER=isDark?'#1a2a35':'#cfe6f0';
+const DOT='#1D9E75',DOT_S=isDark?'#1a2a35':'#fff',HOVER=isDark?'#3a5570':'#a8cfa8',ACTIVE_C=isDark?'#1D9E75':'#9FE1CB';
+const W=900,H=460;
+const svg=d3.select('#map-svg').attr('viewBox',`0 0 ${W} ${H}`);
+svg.append('rect').attr('width',W).attr('height',H).attr('fill',WATER);
+const gLand=svg.append('g'),gDots=svg.append('g');
+let projection=d3.geoNaturalEarth1().scale(153).translate([W/2,H/2]);
+let pathGen=d3.geoPath(projection);
+let allData=[],filtered=[],activeId=null,currentView='world',loggedInPhone=null;
+
+function parseParticipants(raw){
+  return raw.map((r,i)=>{
+    const phone  =getCol(r,'WhatsApp number (with country code, e.g. +48 600 000 000)').replace(/[\s+]/g,'');
+    const name   =getCol(r,"First name (and last name or nickname if you'd like)");
+    const from   =getCol(r,'Where are you from originally? (city and/or country)');
+    const city   =getCol(r,'Where do you live or spend most of your time? (city)');
+    const country=getCol(r,'Country');
+    const bio    =getCol(r,'One sentence about yourself — or a quote, a motto, anything (optional)');
+    const consent=getCol(r,'May I show your name and location on the group map?');
+    const coords =geocode(city,country);
+    return{id:i+1,phone,name,from,city,country,bio,consent,coords};
+  }).filter(p=>p.phone&&p.coords);
+}
+
+async function loadData(){
+  document.getElementById('side-count').textContent='loading...';
+  document.getElementById('contact-list').innerHTML='<div style="padding:16px 12px;font-size:12px;color:var(--color-text-tertiary);">Loading...</div>';
+  try{
+    const res=await fetch(SHEET_URL);
+    const raw=await res.json();
+    allData=parseParticipants(raw);
+    filtered=[...allData];
+    renderDots(filtered);renderList(filtered);initFilter();
+  }catch(e){
+    document.getElementById('contact-list').innerHTML='<div style="padding:16px 12px;font-size:12px;color:var(--color-text-tertiary);">Could not load. Try Refresh.</div>';
+  }
+}
+
+function initFilter(){
+  const sel=document.getElementById('country-filter');
+  sel.innerHTML='<option value="">All countries</option>';
+  [...new Set(allData.map(p=>p.country).filter(Boolean))].sort().forEach(c=>{
+    const o=document.createElement('option');o.value=c;o.textContent=c;sel.appendChild(o);
+  });
+}
+
+function cbc(list){const m={};list.forEach(p=>{if(p.country)m[p.country]=(m[p.country]||0)+1;});return m;}
+
+function renderList(list){
+  const el=document.getElementById('contact-list');
+  if(!list.length){el.innerHTML='<div style="padding:16px 12px;font-size:12px;color:var(--color-text-tertiary);">No participants yet.</div>';document.getElementById('side-count').textContent='0 people';return;}
+  el.innerHTML='';
+  list.forEach(p=>{
+    const div=document.createElement('div');
+    div.className='cc'+(p.id===activeId?' active':'');
+    const loc=[p.city,p.country].filter(Boolean).join(', ');
+    div.innerHTML=`<p class="cn">${p.name||'—'}</p><p class="cl">${loc}</p>${p.bio?`<p class="cb">"${p.bio}"</p>`:''}`;
+    div.onclick=()=>selectPerson(p.id);
+    el.appendChild(div);
+  });
+  document.getElementById('side-count').textContent=list.length+' people';
+}
+
+function renderDots(list){
+  gDots.selectAll('g.dot').remove();
+  const pos=applyJitter(list,projection);
+  list.forEach(p=>{
+    if(!p.coords)return;
+    const xy=pos[p.id];if(!xy)return;
+    const[cx,cy]=xy;
+    if(cx<0||cx>W||cy<0||cy>H)return;
+    const g=gDots.append('g').attr('class','dot').attr('transform',`translate(${cx},${cy})`).style('cursor','pointer');
+    g.append('circle').attr('r',p.id===activeId?10:7).attr('fill',DOT).attr('stroke',DOT_S).attr('stroke-width',1.5);
+    if(p.name)g.append('text').attr('text-anchor','middle').attr('dy','-11').attr('font-size','9.5').attr('font-weight','500').attr('fill',isDark?'#9FE1CB':'#085041').text(p.name.split(' ')[0]);
+    g.on('click',(e)=>{e.stopPropagation();selectPerson(p.id);});
+  });
+}
+
+function selectPerson(id){
+  activeId=activeId===id?null:id;
+  renderDots(filtered);renderList(filtered);
+  const wrap=document.getElementById('detail-wrap');
+  if(activeId){
+    const p=allData.find(x=>x.id===activeId);
+    const ini=p.name?p.name.slice(0,2).toUpperCase():'?';
+    const loc=[p.city,p.country].filter(Boolean).join(', ');
+    wrap.innerHTML=`<div id="detail-card">
+      <div style="width:36px;height:36px;border-radius:50%;background:#E1F5EE;display:flex;align-items:center;justify-content:center;font-weight:500;font-size:12px;color:#085041;flex-shrink:0;">${ini}</div>
+      <div style="flex:1;min-width:0;">
+        <p style="margin:0 0 2px;font-size:14px;font-weight:500;color:var(--color-text-primary);">${p.name||'—'}${loggedInPhone&&p.phone===loggedInPhone?' <span style="font-size:11px;color:#0F6E56;">(you)</span>':''}</p>
+        ${p.from?`<p style="margin:0 0 2px;font-size:12px;color:var(--color-text-tertiary);">From: ${p.from}</p>`:''}
+        <p style="margin:0 0 3px;font-size:12px;color:var(--color-text-secondary);"><i class="ti ti-map-pin" style="font-size:11px;vertical-align:-1px;" aria-hidden="true"></i> ${loc||'—'}</p>
+        ${p.bio?`<p style="margin:0 0 3px;font-size:12px;color:var(--color-text-tertiary);font-style:italic;">"${p.bio}"</p>`:''}
+        ${loggedInPhone?`<p style="margin:0;font-size:12px;color:#0F6E56;"><i class="ti ti-brand-whatsapp" style="font-size:13px;vertical-align:-1px;" aria-hidden="true"></i> +${p.phone}</p>`:`<p style="margin:0;font-size:11px;color:var(--color-text-tertiary);">Log in to see phone number</p>`}
+      </div>
+      <button onclick="document.getElementById('detail-wrap').innerHTML='';activeId=null;renderDots(filtered);renderList(filtered);" style="font-size:11px;padding:3px 8px;" aria-label="Close">×</button>
+    </div>`;
+  }else{wrap.innerHTML='';}
+}
+
+function zoomToCountry(name){
+  const cp=filtered.filter(p=>p.country===name&&p.coords);
+  if(cp.length<2)return;
+  currentView='country';
+  document.getElementById('view-label').textContent=name;
+  document.getElementById('zoom-bar').style.display='block';
+  document.getElementById('hint-el').style.display='none';
+  const lats=cp.map(p=>p.coords[0]),lons=cp.map(p=>p.coords[1]);
+  const minLat=Math.min(...lats),maxLat=Math.max(...lats),minLon=Math.min(...lons),maxLon=Math.max(...lons);
+  const padLat=Math.max((maxLat-minLat)*0.7,3),padLon=Math.max((maxLon-minLon)*0.7,4);
+  const center=[(minLon+maxLon)/2,(minLat+maxLat)/2];
+  const tmp=d3.geoNaturalEarth1().scale(153).translate([W/2,H/2]);
+  const[[x0,y0],[x1,y1]]=[[minLon-padLon,minLat-padLat],[maxLon+padLon,maxLat+padLat]].map(([lo,la])=>tmp([lo,la]));
+  const s=Math.min(12,0.85/Math.max((x1-x0)/W,(y1-y0)/H))*153;
+  projection=d3.geoNaturalEarth1().scale(s).translate([W/2,H/2]).center(center);
+  pathGen=d3.geoPath(projection);
+  gLand.selectAll('path').attr('d',pathGen);
+  renderDots(cp);renderList(cp);highlightCountry(name);
+}
+
+function zoomOut(){
+  currentView='world';
+  document.getElementById('view-label').textContent='world view';
+  document.getElementById('zoom-bar').style.display='none';
+  document.getElementById('hint-el').style.display='block';
+  document.getElementById('country-filter').value='';
+  projection=d3.geoNaturalEarth1().scale(153).translate([W/2,H/2]);
+  pathGen=d3.geoPath(projection);
+  gLand.selectAll('path').attr('d',pathGen);
+  filtered=[...allData];activeId=null;
+  document.getElementById('detail-wrap').innerHTML='';
+  renderDots(filtered);renderList(filtered);highlightCountry(null);
+}
+
+function highlightCountry(name){
+  gLand.selectAll('path').attr('fill',d=>{
+    if(!name)return LAND;
+    const n=d.properties&&d.properties.name;
+    const m=CNM[name];
+    return(n&&(n===m||n===name))?ACTIVE_C:LAND;
+  });
+}
+
+document.getElementById('login-btn').onclick=function(){
+  const raw=document.getElementById('phone-input').value.trim().replace(/[\s+]/g,'');
+  const match=allData.find(p=>p.phone===raw);
+  const status=document.getElementById('login-status');
+  if(match){
+    loggedInPhone=raw;
+    status.textContent='Welcome, '+(match.name?match.name.split(' ')[0]:'+'+raw);
+    status.style.color='#0F6E56';
+    if(activeId)selectPerson(activeId);
+  }else if(raw){
+    status.textContent='Number not found';
+    status.style.color='var(--color-text-secondary)';
+  }
+};
+
+document.getElementById('country-filter').onchange=function(){
+  const val=this.value;
+  if(val){
+    filtered=allData.filter(p=>p.country===val);
+    activeId=null;document.getElementById('detail-wrap').innerHTML='';
+    if((cbc(allData)[val]||0)>=2)zoomToCountry(val);
+    else{renderDots(filtered);renderList(filtered);}
+  }else{
+    if(currentView!=='world')zoomOut();
+    else{filtered=[...allData];renderDots(filtered);renderList(filtered);}
+  }
+};
+
+document.getElementById('back-btn').onclick=zoomOut;
+
+d3.json('https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json').then(world=>{
+  const features=topojson.feature(world,world.objects.countries).features;
+  gLand.selectAll('path').data(features).join('path')
+    .attr('d',pathGen).attr('fill',LAND).attr('stroke',BORDER).attr('stroke-width',0.4)
+    .on('mouseover',function(e,d){
+      if(currentView!=='world')return;
+      const n=d.properties&&d.properties.name;
+      const our=Object.keys(CNM).find(k=>CNM[k]===n||k===n);
+      if(our&&(cbc(allData)[our]||0)>=2)d3.select(this).attr('fill',HOVER);
+    })
+    .on('mouseout',function(){if(currentView==='world')d3.select(this).attr('fill',LAND);})
+    .on('click',(e,d)=>{
+      if(currentView!=='world')return;
+      const n=d.properties&&d.properties.name;
+      const our=Object.keys(CNM).find(k=>CNM[k]===n||k===n);
+      if(our&&(cbc(allData)[our]||0)>=2)zoomToCountry(our);
+    });
+  loadData();
+});
+</script>
