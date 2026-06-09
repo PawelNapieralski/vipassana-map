@@ -44,7 +44,7 @@
         <select id="country-filter"><option value="">All countries</option></select>
       </div>
       <div id="contact-list"><div style="padding:16px 12px;font-size:12px;color:var(--color-text-tertiary);">Loading...</div></div>
-      <div id="zoom-bar"><button id="back-btn" style="font-size:12px;width:100%;"><i class="ti ti-arrow-left" aria-hidden="true"></i> Back to world</button></div>
+      <div id="zoom-bar"><button id="back-btn" style="font-size:12px;width:100%;">← Back to world</button></div>
     </div>
   </div>
   <div id="detail-wrap"></div>
@@ -52,7 +52,7 @@
     <input type="tel" id="phone-input" placeholder="Your number (+48...)" style="font-size:12px;width:160px;"/>
     <button id="login-btn" style="font-size:12px;">Log in</button>
     <span id="login-status" style="font-size:11px;color:var(--color-text-tertiary);"></span>
-    <button style="font-size:12px;margin-left:auto;" onclick="loadData()"><i class="ti ti-refresh" aria-hidden="true"></i> Refresh</button>
+    <button style="font-size:12px;margin-left:auto;" onclick="loadData()">↺ Refresh</button>
   </div>
 </div>
 
@@ -60,11 +60,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
 <script>
 const SHEET_URL='https://script.google.com/macros/s/AKfycbzE2Eo8bv27MwHEWKJ87JZAVCgYjVcVXXYFY_ClyPW1oVw0ppP7wCwvMBROcqVN8-mL/exec';
-
-function getCol(row,key){
-  const k=Object.keys(row).find(k=>k.trim()===key.trim());
-  return k?String(row[k]||'').trim():'';
-}
 
 function applyJitter(list,proj){
   const R=16;
@@ -84,8 +79,7 @@ function applyJitter(list,proj){
       if(n===1){out[p.id]=[cx,cy];}
       else{
         const angle=(2*Math.PI/n)*i-Math.PI/2;
-        const r=n===2?R*0.6:R;
-        out[p.id]=[cx+r*Math.cos(angle),cy+r*Math.sin(angle)];
+        out[p.id]=[cx+R*Math.cos(angle),cy+R*Math.sin(angle)];
       }
     });
   });
@@ -121,10 +115,10 @@ const GC={
   'Brazil':'-10.0,-55.0','São Paulo':'-23.55,-46.63','Sao Paulo':'-23.55,-46.63',
   'Canada':'56.0,-96.0','Toronto':'43.65,-79.38','Vancouver':'49.28,-123.12','Montreal':'45.50,-73.57',
   'Netherlands':'52.3,5.3','Amsterdam':'52.37,4.90','Rotterdam':'51.92,4.48',
-  'Sweden':'60.0,18.0','Stockholm':'59.33,18.07',
+  'Sweden':'60.0,18.0','Stockholm':'59.33,18.07','Gothenburg':'57.71,11.97',
   'Italy':'42.0,13.0','Rome':'41.90,12.50','Milan':'45.46,9.19','Florence':'43.77,11.25',
   'Switzerland':'46.8,8.2','Zurich':'47.38,8.54','Geneva':'46.20,6.14',
-  'Austria':'47.5,14.5','Vienna':'48.21,16.37',
+  'Austria':'47.5,14.5','Vienna':'48.21,16.37','Salzburg':'47.80,13.04',
   'Portugal':'39.5,-8.0','Lisbon':'38.72,-9.14','Porto':'41.16,-8.63',
   'Thailand':'15.0,101.0','Bangkok':'13.75,100.52','Chiang Mai':'18.79,98.98',
   'Vietnam':'16.0,108.0','Ho Chi Minh':'10.82,106.63','Hanoi':'21.03,105.83',
@@ -139,7 +133,7 @@ const GC={
   'Romania':'45.9,24.9','Bucharest':'44.44,26.10','Cluj':'46.77,23.59',
   'Slovakia':'48.7,19.5','Bratislava':'48.15,17.11',
   'Denmark':'56.0,10.0','Copenhagen':'55.68,12.57',
-  'Norway':'60.5,8.0','Oslo':'59.91,10.75',
+  'Norway':'60.5,8.0','Oslo':'59.91,10.75','Bergen':'60.39,5.32',
   'Finland':'64.0,26.0','Helsinki':'60.17,24.94',
   'Belgium':'50.8,4.5','Brussels':'50.85,4.35',
   'Greece':'39.0,22.0','Athens':'37.98,23.73',
@@ -207,27 +201,20 @@ let projection=d3.geoNaturalEarth1().scale(153).translate([W/2,H/2]);
 let pathGen=d3.geoPath(projection);
 let allData=[],filtered=[],activeId=null,currentView='world',loggedInPhone=null;
 
-function parseParticipants(raw){
-  return raw.map((r,i)=>{
-    const phone  =getCol(r,'WhatsApp number (with country code, e.g. +48 600 000 000)').replace(/[\s+]/g,'');
-    const name   =getCol(r,"First name (and last name or nickname if you'd like)");
-    const from   =getCol(r,'Where are you from originally? (city and/or country)');
-    const city   =getCol(r,'Where do you live or spend most of your time? (city)');
-    const country=getCol(r,'Country');
-    const bio    =getCol(r,'One sentence about yourself — or a quote, a motto, anything (optional)');
-    const consent=getCol(r,'May I show your name and location on the group map?');
-    const coords =geocode(city,country);
-    return{id:i+1,phone,name,from,city,country,bio,consent,coords};
-  }).filter(p=>p.phone&&p.coords);
+function parseRow(r,i){
+  const phone=(r.phone||'').replace(/[\s+]/g,'');
+  const coords=geocode(r.city,r.country);
+  return{id:i+1,phone,name:r.name||'',from:r.from||'',city:r.city||'',country:r.country||'',bio:r.bio||'',consent:r.consent||'',coords};
 }
 
-async function loadData(){
+async function loadData(token){
   document.getElementById('side-count').textContent='loading...';
   document.getElementById('contact-list').innerHTML='<div style="padding:16px 12px;font-size:12px;color:var(--color-text-tertiary);">Loading...</div>';
   try{
-    const res=await fetch(SHEET_URL);
+    const url=token?`${SHEET_URL}?token=${token}`:SHEET_URL;
+    const res=await fetch(url);
     const raw=await res.json();
-    allData=parseParticipants(raw);
+    allData=raw.map(parseRow).filter(p=>p.coords);
     filtered=[...allData];
     renderDots(filtered);renderList(filtered);initFilter();
   }catch(e){
@@ -283,14 +270,15 @@ function selectPerson(id){
     const p=allData.find(x=>x.id===activeId);
     const ini=p.name?p.name.slice(0,2).toUpperCase():'?';
     const loc=[p.city,p.country].filter(Boolean).join(', ');
+    const isMe=loggedInPhone&&p.phone===loggedInPhone;
     wrap.innerHTML=`<div id="detail-card">
       <div style="width:36px;height:36px;border-radius:50%;background:#E1F5EE;display:flex;align-items:center;justify-content:center;font-weight:500;font-size:12px;color:#085041;flex-shrink:0;">${ini}</div>
       <div style="flex:1;min-width:0;">
-        <p style="margin:0 0 2px;font-size:14px;font-weight:500;color:var(--color-text-primary);">${p.name||'—'}${loggedInPhone&&p.phone===loggedInPhone?' <span style="font-size:11px;color:#0F6E56;">(you)</span>':''}</p>
+        <p style="margin:0 0 2px;font-size:14px;font-weight:500;color:var(--color-text-primary);">${p.name||'—'}${isMe?' <span style="font-size:11px;color:#0F6E56;">(you)</span>':''}</p>
         ${p.from?`<p style="margin:0 0 2px;font-size:12px;color:var(--color-text-tertiary);">From: ${p.from}</p>`:''}
-        <p style="margin:0 0 3px;font-size:12px;color:var(--color-text-secondary);"><i class="ti ti-map-pin" style="font-size:11px;vertical-align:-1px;" aria-hidden="true"></i> ${loc||'—'}</p>
+        <p style="margin:0 0 3px;font-size:12px;color:var(--color-text-secondary);">📍 ${loc||'—'}</p>
         ${p.bio?`<p style="margin:0 0 3px;font-size:12px;color:var(--color-text-tertiary);font-style:italic;">"${p.bio}"</p>`:''}
-        ${loggedInPhone?`<p style="margin:0;font-size:12px;color:#0F6E56;"><i class="ti ti-brand-whatsapp" style="font-size:13px;vertical-align:-1px;" aria-hidden="true"></i> +${p.phone}</p>`:`<p style="margin:0;font-size:11px;color:var(--color-text-tertiary);">Log in to see phone number</p>`}
+        ${p.phone?`<p style="margin:0;font-size:12px;color:#0F6E56;">📱 +${p.phone}</p>`:`<p style="margin:0;font-size:11px;color:var(--color-text-tertiary);">Log in to see phone number</p>`}
       </div>
       <button onclick="document.getElementById('detail-wrap').innerHTML='';activeId=null;renderDots(filtered);renderList(filtered);" style="font-size:11px;padding:3px 8px;" aria-label="Close">×</button>
     </div>`;
@@ -340,17 +328,35 @@ function highlightCountry(name){
   });
 }
 
-document.getElementById('login-btn').onclick=function(){
+document.getElementById('login-btn').onclick=async function(){
   const raw=document.getElementById('phone-input').value.trim().replace(/[\s+]/g,'');
-  const match=allData.find(p=>p.phone===raw);
+  if(!raw)return;
   const status=document.getElementById('login-status');
-  if(match){
-    loggedInPhone=raw;
-    status.textContent='Welcome, '+(match.name?match.name.split(' ')[0]:'+'+raw);
-    status.style.color='#0F6E56';
-    if(activeId)selectPerson(activeId);
-  }else if(raw){
-    status.textContent='Number not found';
+  status.textContent='Checking...';
+  status.style.color='var(--color-text-tertiary)';
+  try{
+    const res=await fetch(`${SHEET_URL}?token=${raw}`);
+    const data=await res.json();
+    const match=data.find(r=>r.phone&&r.phone.replace(/[\s+]/g,'')===raw);
+    if(match){
+      loggedInPhone=raw;
+      allData=data.map(parseRow).filter(p=>p.coords);
+      filtered=currentView==='world'?[...allData]:allData.filter(p=>p.country===document.getElementById('country-filter').value||true);
+      if(currentView!=='world'){
+        const cv=document.getElementById('view-label').textContent;
+        filtered=allData.filter(p=>p.country===cv);
+      } else {
+        filtered=[...allData];
+      }
+      renderDots(filtered);renderList(filtered);initFilter();
+      status.textContent='Welcome, '+(match.name?match.name.split(' ')[0]:'+'+raw);
+      status.style.color='#0F6E56';
+    } else {
+      status.textContent='Number not found — fill the form first';
+      status.style.color='var(--color-text-secondary)';
+    }
+  }catch(e){
+    status.textContent='Error — try again';
     status.style.color='var(--color-text-secondary)';
   }
 };
